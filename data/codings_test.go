@@ -3,6 +3,7 @@ package data
 import (
 	"encoding/hex"
 	"log"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,10 +35,17 @@ func testEncodingSplit(t *testing.T, enc EncDec, octetLim uint, original string,
 	segEncoded, err := splitter.EncodeSplit(original, octetLim)
 	require.Nil(t, err)
 
+	var parts []string
 	for i, seg := range segEncoded {
 		require.Equal(t, fromHex(expected[i]), seg)
-		require.LessOrEqualf(t, uint(len(seg)), octetLim,
-			"Segment len must be less than or equal to %d, got %d", octetLim, len(seg))
+
+		segLen := len(seg)
+		if enc == GSM7BIT {
+			//FIXME should only be used for `rawText`
+			segLen = segLen * 7 / 8
+		}
+		require.LessOrEqualf(t, uint(segLen), octetLim,
+			"Segment len must be less than or equal to %d, got %d", octetLim, segLen)
 
 		if enc == GSM7BITPACKED {
 			seg = shiftBitsOneRight(seg)
@@ -45,6 +53,14 @@ func testEncodingSplit(t *testing.T, enc EncDec, octetLim uint, original string,
 		decoded, err := enc.Decode(seg)
 		require.Nil(t, err)
 		require.Equal(t, expectDecode[i], decoded)
+
+		parts = append(parts, decoded)
+	}
+
+	// disabled, because uses '\r' in the end of some segments, why?
+	if enc != GSM7BITPACKED {
+		join := strings.Join(parts, "")
+		require.Equal(t, original, join)
 	}
 }
 
@@ -84,8 +100,15 @@ func TestShouldSplit(t *testing.T) {
 		expect := map[string]bool{
 			"":  false,
 			"1": false,
-			"12312312311231231231123123123112312312311231231231123123123112312312311231231231123123123112312312311231231231123123123112312312311234121212":  false,
-			"123123123112312312311231231231123123123112312312311231231231123123123112312312311231231231123123123112312312311231231231123123123112342212121": true,
+			"1234567890123456789012312312311231231231123123123112312312311231231231123123123112312312311231231231123123123112312312311231231231123123123112312312311234121212":  false,
+			"12345678901234567890123123123112312312311231231231123123123112312312311231231231123123123112312312311231231231123123123112312312311231231231123123123112342212121": true,
+
+			"12312312311231231231123123123112312312311231231231123123123112312312311231231231123123123112312312311231231231123123123112312312311234121212":                      false,
+			"gjwklgjkwP123+?sasdasdaqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqdqwdqwDQWdqwdqwdqwdqwwqwdqwdqwddqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqdwqdqwqwdqwdqwqwdqw":  false, /* 160 regular basic alphabet chars */
+			"gjwklgjkwP123+?sasdasdaqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqdqwdqwDQWdqwdqwdqwdqwwqwdqwdqwddqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqdwqdqwqwdqwdqwqwdqwd": true,  /* 161 regular basic alphabet chars */
+			"gjwklgjkwP123+?sasdasdaqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqdqwdqwDQWdqwdqwdqwdqwwqwdqwdqwddqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqdwqdqwqwdqwdqwqwdqw{": true,  /* 159 regular basic alphabet chars + 1 escape char at the end */
+			"|}€€|]|€[~€^]€~{~^{|]]|[{|~€^|]^[[{€^]^{€}}^~~]€]~€[€€[]~~[}}]{^}{|}~~]]€^{^|€{^":                                                                                  false, /* 80 escape chars */
+			"|}€€|]|€[~€^]€~{~^{|]]|[{|~€^|]^[[{€^]^{€}}^~~]€]~€[€€[]~~[}}]{^}{|}~~]]€^{^|€{^{":                                                                                 true,  /* 81 escape chars */
 		}
 
 		splitter, _ := GSM7BIT.(Splitter)
@@ -312,6 +335,149 @@ func TestSplit_GSM7BITPACKED(t *testing.T) {
 			},
 			[]string{
 				"|{[€|^€[{|€{[|^{~[}€|}|^|^[^]€{[]~}€]{{^|^][€]|€~€^[~}^]{]~{^^€^[~|^]|€~|^€{\r",
+				"]{~|}",
+			})
+	})
+}
+
+func TestSplit_GSM7BIT(t *testing.T) {
+	require.EqualValues(t, 0o0, GSM7BIT.DataCoding())
+
+	t.Run("testSplit_Escape_GSM7BIT", func(t *testing.T) {
+		testEncodingSplit(t, GSM7BIT,
+			134,
+			//better -1 char
+			"gjwklgjkwP123+?sasdasdaqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqdqwdqwDQWdqwdqwdqwdqwwqwdqwdqwddqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqdwqdqwqwdqwdqwqwdqw{",
+			[]string{
+				"676a776b6c676a6b77503132332b3f736173646173646171776471776471776471776471776471776471776471776471776471776471776471776471776471776471776471776471776471647177647177445157647177647177647177647177777177647177647177646471776471776471776471776471776471776471776471776471776471776471776471647771647177717764717764",
+				"717771776471771b28",
+			},
+			[]string{
+				"gjwklgjkwP123+?sasdasdaqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqdqwdqwDQWdqwdqwdqwdqwwqwdqwdqwddqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqwdqdwqdqwqwdqwd",
+				"qwqwdqw{",
+			})
+	})
+
+	/*
+		Total char count = 160,
+		Esc char count = 1,
+		Regular char count = 159,
+		Seg1 => 153->€
+		Expected behaviour: Should not split in the middle of ESC chars
+	*/
+	t.Run("testSplit_EscEndOfSeg1_GSM7BIT", func(t *testing.T) {
+		testEncodingSplit(t, GSM7BIT,
+			134,
+			"pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp€ppppppp",
+			[]string{
+				//"e070381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c31b",
+				"7070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070",
+				//"3665381c0e87c3e1",
+				"1b6570707070707070",
+			},
+			[]string{
+				//"pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp\r",
+				"pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+				"€ppppppp",
+			})
+	})
+
+	/*
+		Total char count = 160,
+		Esc char count = 2,
+		Regular char count = 158,
+		Seg1 => 152-> ....{
+		Seg2 => 1-> ....{
+		Expected behaviour: Should not split in the middle of ESC chars
+	*/
+	t.Run("testSplit_EscEndOfSeg1AndSeg2_1_GSM7BIT", func(t *testing.T) {
+		testEncodingSplit(t, GSM7BIT,
+			134,
+			"pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp{{pppppppp",
+			[]string{
+				//"e070381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0edfa01a",
+				//"7070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070701b281b2870",
+				"7070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070701b28",
+				//"3628381c0e87c3e170",
+				"1b287070707070707070",
+			},
+			[]string{
+				"pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp{",
+				"{pppppppp",
+			})
+	})
+
+	/*
+		Total char count = 160,
+		Esc char count = 2,
+		Regular char count = 158,
+		Seg1 => 152-> ....€
+		Seg2 => 1-> ....€
+		Expected behaviour: Should not split in the middle of ESC chars
+	*/
+	t.Run("testSplit_EscEndOfSeg1AndSeg2_2_GSM7BIT", func(t *testing.T) {
+		testEncodingSplit(t, GSM7BIT,
+			134,
+			"pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp€€pppppppp",
+			[]string{
+				//"e070381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0e87c3e170381c0edf941b",
+				"7070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070707070701b65",
+				//"3665381c0e87c3e170",
+				"1b657070707070707070",
+			},
+			[]string{
+				"pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp€",
+				"€pppppppp",
+			})
+	})
+
+	/*
+		Total char count = 162,
+		Esc char count = 0,
+		Regular char count = 162,
+		Seg1 => 153
+		Seg2 => 9
+		Scenario: All characters in the GSM7Bit Basic Character Set table (non-escape chars) https://en.wikipedia.org/wiki/GSM_03.38
+	*/
+	t.Run("testSplit_AllGSM7BitBasicCharset_GSM7BIT", func(t *testing.T) {
+		testEncodingSplit(t, GSM7BIT,
+			134,
+			"ΩØ;19Ξòå1-¤6aΞΘANanΣ¡>)òΦ3L;aøΛ-o@>I¥1=-ü!N¤&o9Hmda3jΞ@ÅΣlhEE§/:Çù0Θ&:_&Π;KLÅÅ@fÜ-kFH?ΠB5/ÆΓ?55=<Ω¡N2ñ¥*L¤aÖ! ÖΘ+øF£_Ç?øΔΓ-lèòCìnEBmhÉF*<Åi/aΩ¥CDøfGÇ$/=Λ'ÅA3ò#fkù",
+			[]string{
+				//"150b3b31391a080f312d2436611a19414e616e18403e29812334c3b61c142d6f0003e4903313d2d7e214e24266f39486d6461336a1a000e186c6845455f2f3a963019263a1126163b4b4cee0665e2d6b46483f1642352f1c133f35353d3c15404e327d32a4c24615c21205c192bc4611193fc10132d6c484376e45426d681f462a3ce692f611534344c6647922f3d14",
+				"150b3b31391a080f312d2436611a19414e616e18403e290812334c3b610c142d6f003e4903313d2d7e214e24266f39486d6461336a1a000e186c6845455f2f3a09063019263a1126163b4b4c0e0e00665e2d6b46483f1642352f1c133f35353d3c15404e327d032a4c24615c21205c192b0c460111093f0c10132d6c040843076e45426d681f462a3c0e692f61150343440c664709022f3d14",
+				//"2a8b5d2ca7413c622d922dacc9049d613706e84b212433e62ecca0b4de005f7210ebb5fc2127c9f4ce21dbe4f04cad0138306c74b1f87de9120658c6a48b982cbb25d3e10098bdadb511f9b3086b2fcee457abf57815a053d61fa898a4303704e266560c632092f8312093169b80181edc45611bfd31aa788ef42b5c190c890cf3312178f528",
+				//"4e8ee00c3132af0d",
+				"270e41330823666b06",
+			},
+			[]string{
+				"ΩØ;19Ξòå1-¤6aΞΘANanΣ¡>)òΦ3L;aøΛ-o@>I¥1=-ü!N¤&o9Hmda3jΞ@ÅΣlhEE§/:Çù0Θ&:_&Π;KLÅÅ@fÜ-kFH?ΠB5/ÆΓ?55=<Ω¡N2ñ¥*L¤aÖ! ÖΘ+øF£_Ç?øΔΓ-lèòCìnEBmhÉF*<Åi/aΩ¥CDøfGÇ$/=Λ",
+				"'ÅA3ò#fkù",
+			})
+	})
+
+	/*
+		Total char count = 81,
+		Esc char count = 81,
+		Regular char count = 0,
+		Seg1 => 153
+		Seg2 => 9
+		Scenario: All charcters in the GSM7Bit Escape Character Set table https://en.wikipedia.org/wiki/GSM_03.38
+	*/
+	t.Run("testSplit_AllGSM7BitBasicCharset_GSM7BIT", func(t *testing.T) {
+		testEncodingSplit(t, GSM7BIT,
+			134,
+			"|{[€|^€[{|€{[|^{~[}€|}|^|^[^]€{[]~}€]{{^|^][€]|€~€^[~}^]{]~{^^€^[~|^]|€~|^€{]{~|}",
+			[]string{
+				//"36c00d6ac3db9437c00d6553def036a80d7053dea036bc0d7043d9a036bd0d6f93da9437c04d6a03dc5036c00d65c3db5036be4d7983daf036be4d6f93da9437be0d6a83da5036c00d65e3dbf036e58d6f03dc9437bd4d7943d9f036bd4d6a43d9f836a88d6fd3dba036940d6553de5036bc4d6f03dc5036be0d7053def436c00d6553dea01a",
+				//"1b401b281b3c1b651b401b141b651b3c1b281b401b651b281b3c1b401b141b281b3d1b3c1b291b651b401b291b401b141b401b141b3c1b141b3e1b651b281b3c1b3e1b3d1b291b651b3e1b281b281b141b401b141b3e1b3c1b651b3e1b401b651b3d1b651b141b3c1b3d1b291b141b3e1b281b3e1b3d1b281b141b141b651b141b3c1b3d1b401b141b3e1b401b651b3d1b401b141b651b281b3e1b281b3d1b401b29",
+				"1b401b281b3c1b651b401b141b651b3c1b281b401b651b281b3c1b401b141b281b3d1b3c1b291b651b401b291b401b141b401b141b3c1b141b3e1b651b281b3c1b3e1b3d1b291b651b3e1b281b281b141b401b141b3e1b3c1b651b3e1b401b651b3d1b651b141b3c1b3d1b291b141b3e1b281b3e1b3d1b281b141b141b651b141b3c1b3d1b401b141b3e1b401b651b3d1b401b141b651b28",
+				//"36be0d6ad3db003729",
+				"1b3e1b281b3d1b401b29",
+			},
+			[]string{
+				//"|{[€|^€[{|€{[|^{~[}€|}|^|^[^]€{[]~}€]{{^|^][€]|€~€^[~}^]{]~{^^€^[~|^]|€~|^€{\r",
+				"|{[€|^€[{|€{[|^{~[}€|}|^|^[^]€{[]~}€]{{^|^][€]|€~€^[~}^]{]~{^^€^[~|^]|€~|^€{",
 				"]{~|}",
 			})
 	})

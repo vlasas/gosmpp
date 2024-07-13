@@ -79,7 +79,8 @@ func (c *CustomEncoding) DataCoding() byte {
 }
 
 type gsm7bit struct {
-	packed bool
+	packed  bool
+	rawText bool
 }
 
 func (c *gsm7bit) Encode(str string) ([]byte, error) {
@@ -93,32 +94,41 @@ func (c *gsm7bit) Decode(data []byte) (string, error) {
 func (c *gsm7bit) DataCoding() byte { return GSM7BITCoding }
 
 func (c *gsm7bit) ShouldSplit(text string, octetLimit uint) (shouldSplit bool) {
-	if c.packed {
-		return uint((len(text)*7+7)/8) > octetLimit
-	} else {
-		return uint(len(text)) > octetLimit
-	}
+	runeSlice := []rune(text)
+	tLen := len(runeSlice)
+	escCharsLen := len(GetEscapeChars(runeSlice))
+	regCharsLen := tLen - escCharsLen
+	// Escape characters occupy 2 octets/septets
+	// https://en.wikipedia.org/wiki/GSM_03.38
+	// https://www.developershome.com/sms/gsmAlphabet.asp
+	return uint((regCharsLen*7+escCharsLen*2*7+7)/8) > octetLimit
 }
 
 func (c *gsm7bit) EncodeSplit(text string, octetLimit uint) (allSeg [][]byte, err error) {
 	if octetLimit < 64 {
 		octetLimit = 134
 	}
+	if c.rawText {
+		octetLimit = octetLimit * 8 / 7
+	}
+	lim := int(octetLimit)
 
 	allSeg = [][]byte{}
 	runeSlice := []rune(text)
 
-	fr, to := 0, int(octetLimit)
+	fr, to := 0, lim
 	for fr < len(runeSlice) {
 		if to > len(runeSlice) {
 			to = len(runeSlice)
 		}
+		to = determineTo(fr, to, lim, runeSlice)
+
 		seg, err := c.Encode(string(runeSlice[fr:to]))
 		if err != nil {
 			return nil, err
 		}
 		allSeg = append(allSeg, seg)
-		fr, to = to, to+int(octetLimit)
+		fr, to = to, to+lim
 	}
 
 	return
@@ -357,7 +367,8 @@ func (*ucs2) DataCoding() byte { return UCS2Coding }
 
 var (
 	// GSM7BIT is gsm-7bit encoding.
-	GSM7BIT Encoding = &gsm7bit{packed: false}
+	// rawText - send rawText in SMPP to be packed later on SS7 side, calculated according to packed rules 160chars -> 140octets
+	GSM7BIT Encoding = &gsm7bit{packed: false, rawText: true}
 
 	// GSM7BITPACKED is packed gsm-7bit encoding.
 	// Most of SMSC(s) use unpack version.
