@@ -332,7 +332,13 @@ func (*ucs2) Decode(data []byte) (string, error) {
 
 func (*ucs2) ShouldSplit(text string, octetLimit uint) (shouldSplit bool) {
 	runeSlice := []rune(text)
-	return uint(len(runeSlice)*2) > octetLimit
+	surrogatePairs := 0
+	for _, r := range runeSlice {
+		if isUtf16SurrogatePair(r) {
+			surrogatePairs++
+		}
+	}
+	return uint((len(runeSlice)+surrogatePairs)*2) > octetLimit
 }
 
 func (c *ucs2) EncodeSplit(text string, octetLimit uint) (allSeg [][]byte, err error) {
@@ -351,6 +357,8 @@ func (c *ucs2) EncodeSplit(text string, octetLimit uint) (allSeg [][]byte, err e
 			to = len(runeSlice)
 		}
 
+		to = determineUcs2To(fr, to, hextetLim, runeSlice)
+
 		seg, err := c.Encode(string(runeSlice[fr:to]))
 		if err != nil {
 			return nil, err
@@ -361,6 +369,33 @@ func (c *ucs2) EncodeSplit(text string, octetLimit uint) (allSeg [][]byte, err e
 	}
 
 	return
+}
+
+func determineUcs2To(from int, to int, lim int, runeSlice []rune) int {
+	len := 0
+	for len < lim {
+		if isUtf16SurrogatePair(runeSlice[from]) {
+			len += 2
+		} else {
+			len++
+		}
+		from++
+		if from >= to {
+			break
+		}
+	}
+	to = from
+
+	if isUtf16SurrogatePair(runeSlice[to-1]) { // Don't split in the middle
+		if len > lim {
+			to--
+		}
+	}
+	return to
+}
+
+func isUtf16SurrogatePair(r rune) bool {
+	return r >= 0x10000
 }
 
 func (*ucs2) DataCoding() byte { return UCS2Coding }
@@ -394,6 +429,9 @@ var (
 	HEBREW Encoding = &iso88598{}
 
 	// UCS2 encoding.
+	// Unicode SMS format was originally defined as using UCS-2 encoding, but standards updates have changed this to use UTF-16 encoding instead.
+	// Characters below 0x10000, which are part of the UCS-2 range, are encoded in UTF-16 as their standard 16-bit character value.
+	// Characters 0x10000 and above (UCS-4) are encoded in UTF-16 with two 16-bit characters.
 	UCS2 Encoding = &ucs2{}
 )
 
